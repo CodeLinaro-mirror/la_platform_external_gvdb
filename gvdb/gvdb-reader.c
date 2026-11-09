@@ -243,7 +243,7 @@ static gboolean
 gvdb_table_check_name (GvdbTable             *file,
                        struct gvdb_hash_item *item,
                        const gchar           *key,
-                       guint                  key_length)
+                       gsize                  key_length)
 {
   const gchar *this_key;
   gsize this_size;
@@ -271,22 +271,42 @@ gvdb_table_check_name (GvdbTable             *file,
   return FALSE;
 }
 
-static const struct gvdb_hash_item *
-gvdb_table_lookup (GvdbTable   *file,
-                   const gchar *key,
-                   gchar        type)
+/**
+ * gvdb_hash_string:
+ * @key: a string
+ *
+ * Hashes @key for use with gvdb_table_list_with_hash().
+ *
+ * Returns: the hash of @key
+ */
+guint32
+gvdb_hash_string (const char *key)
 {
+  const signed char *p = (const signed char *) key;
   guint32 hash_value = 5381;
-  guint key_length;
+
+  g_return_val_if_fail (key != NULL, 0);
+
+  while (*p != 0)
+    hash_value = (hash_value * 33) + *p++;
+
+  return hash_value;
+}
+
+static const struct gvdb_hash_item *
+gvdb_table_lookup_with_hash (GvdbTable  *file,
+                             const char *key,
+                             char        type,
+                             guint32     hash_value)
+{
+  gsize key_length = 0;
+  gboolean have_key_length = FALSE;
   guint32 bucket;
   guint32 lastno;
   guint32 itemno;
 
   if G_UNLIKELY (file->n_buckets == 0 || file->n_hash_items == 0)
     return NULL;
-
-  for (key_length = 0; key[key_length]; key_length++)
-    hash_value = (hash_value * 33) + ((signed char *) key)[key_length];
 
   if (!gvdb_table_bloom_filter (file, hash_value))
     return NULL;
@@ -303,14 +323,35 @@ gvdb_table_lookup (GvdbTable   *file,
       struct gvdb_hash_item *item = &file->hash_items[itemno];
 
       if (hash_value == guint32_from_le (item->hash_value))
-        if G_LIKELY (gvdb_table_check_name (file, item, key, key_length))
-          if G_LIKELY (item->type == type)
-            return item;
+        {
+          if (!have_key_length)
+            {
+              key_length = strlen (key);
+              have_key_length = TRUE;
+            }
+
+          if G_LIKELY (gvdb_table_check_name (file, item, key, key_length))
+            {
+              if G_LIKELY (item->type == type)
+                return item;
+            }
+        }
 
       itemno++;
     }
 
   return NULL;
+}
+
+static const struct gvdb_hash_item *
+gvdb_table_lookup (GvdbTable   *file,
+                   const gchar *key,
+                   gchar        type)
+{
+  if G_UNLIKELY (file->n_buckets == 0 || file->n_hash_items == 0)
+    return NULL;
+
+  return gvdb_table_lookup_with_hash (file, key, type, gvdb_hash_string (key));
 }
 
 static gboolean
@@ -507,13 +548,37 @@ gchar **
 gvdb_table_list (GvdbTable   *file,
                  const gchar *key)
 {
+  if G_UNLIKELY (file->n_buckets == 0 || file->n_hash_items == 0)
+    return NULL;
+
+  return gvdb_table_list_with_hash (file, key, gvdb_hash_string (key));
+}
+
+/**
+ * gvdb_table_list_with_hash:
+ * @file: a #GvdbTable
+ * @key: a string
+ * @hash_value: hash from gvdb_hash_string() for @key
+ *
+ * Similar to gvdb_table_list() but avoids recomputing the hash of @key.
+ *
+ * Returns: a %NULL-terminated string array
+ */
+char **
+gvdb_table_list_with_hash (GvdbTable  *file,
+                           const char *key,
+                           guint32     hash_value)
+{
   const struct gvdb_hash_item *item;
   const guint32_le *list;
   gchar **strv;
   guint length;
   guint i;
 
-  if ((item = gvdb_table_lookup (file, key, 'L')) == NULL)
+  g_return_val_if_fail (file != NULL, NULL);
+  g_return_val_if_fail (key != NULL, NULL);
+
+  if ((item = gvdb_table_lookup_with_hash (file, key, 'L', hash_value)) == NULL)
     return NULL;
 
   if (!gvdb_table_list_from_item (file, item, &list, &length))

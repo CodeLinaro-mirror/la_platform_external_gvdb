@@ -26,6 +26,7 @@ test_gvdb_nested_keys (void)
   char *db_file = g_build_filename (g_get_tmp_dir (), "test_nested_keys.gvdb", NULL);
   GError *local_error = NULL;
   gboolean retval;
+  guint32 hash_value = gvdb_hash_string ("");
 
   root_table = gvdb_hash_table_new (NULL, NULL);
 
@@ -66,6 +67,12 @@ test_gvdb_nested_keys (void)
       g_free (key);
       g_variant_unref (value);
     }
+  g_strfreev (keys);
+
+  g_assert_null (gvdb_table_list_with_hash (root_level, "", hash_value));
+  keys = gvdb_table_list_with_hash (ns_level, "", hash_value);
+  g_assert_nonnull (keys);
+  g_assert_cmpuint (g_strv_length (keys), ==, 3);
   g_strfreev (keys);
 
   gvdb_table_free (root_level);
@@ -131,6 +138,43 @@ test_gvdb_flat_strings (void)
 }
 
 static void
+test_gvdb_prehashed (gconstpointer user_data)
+{
+  GHashTable *table;
+  GBytes *bytes;
+  GError *error = NULL;
+  char **names;
+  GvdbTable *read;
+  GvdbItem *parent, *item;
+  guint32 hash_value = gvdb_hash_string ("é/Aa/");
+
+  table = gvdb_hash_table_new (NULL, NULL);
+  parent = gvdb_hash_table_insert (table, "é/Aa/");
+  item = gvdb_hash_table_insert (table, "é/Aa/child");
+  gvdb_item_set_parent (item, parent);
+  gvdb_item_set_value (item, g_variant_new_string ("value"));
+  bytes = gvdb_table_get_contents (table, GPOINTER_TO_INT (user_data));
+  read = gvdb_table_new_from_bytes (bytes, FALSE, &error);
+  g_assert_no_error (error);
+  g_assert_nonnull (read);
+
+  names = gvdb_table_list_with_hash (read, "é/Aa/", hash_value);
+  g_assert_nonnull (names);
+  g_assert_cmpstr (names[0], ==, "child");
+  g_assert_null (names[1]);
+
+  g_assert_cmpuint (hash_value, ==, gvdb_hash_string ("é/B@/"));
+  g_assert_null (gvdb_table_list_with_hash (read, "é/B@/", hash_value));
+  g_assert_null (gvdb_table_list_with_hash (read, "", hash_value));
+  g_assert_null (gvdb_table_list_with_hash (read, "é/Aa/child", gvdb_hash_string ("é/Aa/child")));
+
+  g_strfreev (names);
+  gvdb_table_free (read);
+  g_bytes_unref (bytes);
+  g_hash_table_unref (table);
+}
+
+static void
 test_gvdb_corrupted_file (void)
 {
   char *db_file = g_build_filename (g_get_tmp_dir (), "test_invalid.gvdb", NULL);
@@ -161,6 +205,8 @@ main (int    argc,
   g_test_add_func ("/gvdb/nested_keys", test_gvdb_nested_keys);
   g_test_add_func ("/gvdb/byteswapped", test_gvdb_byteswapped);
   g_test_add_func ("/gvdb/corrupted_file", test_gvdb_corrupted_file);
+  g_test_add_data_func ("/gvdb/prehashed", GINT_TO_POINTER (FALSE), test_gvdb_prehashed);
+  g_test_add_data_func ("/gvdb/prehashed/byteswapped", GINT_TO_POINTER (TRUE), test_gvdb_prehashed);
 
   return g_test_run ();
 }

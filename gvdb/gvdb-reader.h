@@ -44,6 +44,9 @@ typedef struct _GvdbTable GvdbTable;
 G_BEGIN_DECLS
 
 G_GNUC_INTERNAL GVDB_GNUC_WEAK
+guint32                 gvdb_hash_string                                (const char   *key);
+
+G_GNUC_INTERNAL GVDB_GNUC_WEAK
 GvdbTable *             gvdb_table_new_from_bytes                       (GBytes       *bytes,
                                                                          gboolean      trusted,
                                                                          GError      **error);
@@ -59,6 +62,11 @@ gchar **                gvdb_table_get_names                            (GvdbTab
 G_GNUC_INTERNAL GVDB_GNUC_WEAK
 gchar **                gvdb_table_list                                 (GvdbTable    *table,
                                                                          const gchar  *key);
+
+G_GNUC_INTERNAL GVDB_GNUC_WEAK
+char **                 gvdb_table_list_with_hash                       (GvdbTable    *table,
+                                                                         const char   *key,
+                                                                         guint32       hash_value);
 
 G_GNUC_INTERNAL GVDB_GNUC_WEAK
 guint                   gvdb_table_n_children                           (GvdbTable    *table,
